@@ -137,6 +137,15 @@ namespace fsm {
                     finish_plan = true;
                     return;
                 }
+                // AEGIS: this callback runs at 100 Hz and a failed PlanFromRest used to retry on every tick
+                // (upstream left the 0.1 s sleep commented out). A start the map cannot free (inside robot_r
+                // of a surface, or on the ground after landing with the last goal still set) then
+                // busy-looped fsm_node at ~80 % of a core and starved SLAM on the 8 GB Orin (MARSim run
+                // 2026-10-19: odometry gaps -> PX4 DESCEND). Retry at most every 0.1 s.
+                const double now_t = ros_ptr_->getSimTime();
+                if (now_t < next_plan_from_rest_t_) {
+                    return;
+                }
                 int retcode = planner_ptr_->PlanFromRest(gi_.goal_p, gi_.goal_yaw, gi_.new_goal);
                 if (!planner_ptr_->goalValid()) {
                     cout << YELLOW << " -- [Fsm] Goal is invalid, skip this goal." << RESET << endl;
@@ -156,7 +165,7 @@ namespace fsm {
                     ChangeState("MainFsmCallback", FOLLOW_TRAJ);
                 } else {
                     cout << YELLOW << " -- [Fsm] PlanFromRest failed, try replan." << RESET << endl;
-                    // ros::Duration(0.1).sleep();
+                    next_plan_from_rest_t_ = now_t + 0.1;
                 }
                 pushLog(replan_logs_, planner_ptr_->getLatestReplanLog(), cfg_.replan_log_max);
                 break;

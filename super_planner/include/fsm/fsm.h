@@ -65,6 +65,8 @@ namespace fsm {
 
         // params
         bool started_{false}, plan_from_rest_{false};
+        // AEGIS: earliest time of the next PlanFromRest after a failed one (see fsm.cpp GENERATE_TRAJ)
+        double next_plan_from_rest_t_{0.0};
 
         struct GoalInfo {
             bool new_goal;
