@@ -82,7 +82,7 @@ namespace fsm {
         planner_ptr_->getModuleTimeConsuming(log_module_time);
         log_module_time[log_module_time.size() - 2] = replan_once_time.stop();
         // save on log
-        replan_logs_.push_back(planner_ptr_->getLatestReplanLog());
+        pushLog(replan_logs_, planner_ptr_->getLatestReplanLog(), cfg_.replan_log_max);
         WriteTimeToLog();
     }
 
@@ -158,7 +158,7 @@ namespace fsm {
                     cout << YELLOW << " -- [Fsm] PlanFromRest failed, try replan." << RESET << endl;
                     // ros::Duration(0.1).sleep();
                 }
-                replan_logs_.push_back(planner_ptr_->getLatestReplanLog());
+                pushLog(replan_logs_, planner_ptr_->getLatestReplanLog(), cfg_.replan_log_max);
                 break;
             }
             case FOLLOW_TRAJ: {

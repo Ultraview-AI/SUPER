@@ -25,10 +25,13 @@
 #pragma once
 
 #include <queue>
+#include <deque>
+#include <mutex>
 #include <memory>
 #include <fstream>
 #include <fmt/color.h>
 #include <cereal/archives/binary_file_handler.hpp>
+#include <cereal/types/deque.hpp>
 #include <fsm/config.hpp>
 #include <super_core/super_planner.h>
 
@@ -115,9 +118,15 @@ namespace fsm {
             }
 
             // save on log
-            replan_logs_.push_back(planner_ptr_->getLatestReplanLog());
-            fmt::print(fmt::fg(fmt::color::green), " -- Replan ID: {}, ret code: {}\n",
-                       replan_logs_.size() - 1, replan_logs_.back().getRetCode());
+            pushLog(replan_logs_, planner_ptr_->getLatestReplanLog(), cfg_.replan_log_max);
+            size_t replan_id;
+            int ret_code;
+            {
+                std::lock_guard<std::mutex> lock(log_mtx_);
+                replan_id = replan_logs_.size() - 1;
+                ret_code = replan_logs_.back().getRetCode();
+            }
+            fmt::print(fmt::fg(fmt::color::green), " -- Replan ID: {}, ret code: {}\n", replan_id, ret_code);
         }
 
         Eigen::Quaterniond eulerToQuaternion(double roll, double pitch, double yaw) {
@@ -143,7 +152,27 @@ namespace fsm {
         }
 
     protected:
-        vector<LogOneReplan> replan_logs_;
+        // Bounded by fsm/replan_log_max (pushLog): a failing PlanFromRest is retried at the 100 Hz FSM
+        // rate and each attempt logs up to ~100 KB, which grew fsm_node ~3.8 MB/s while the robot was stuck.
+        std::deque<LogOneReplan> replan_logs_;
+
+        // Guards replan_logs_ and every log pushed through pushLog. The FSM timers run on separate threads
+        // (ROS 1 AsyncSpinner(0), ROS 2 MultiThreadedExecutor) and at FOLLOW_TRAJ -> GENERATE_TRAJ both
+        // ReplanOnce and PlanFromRest push: two unguarded pop_front()s can free the same entry. A leaf
+        // lock: taken after the planner has released its own locks, held only for the deque operations.
+        std::mutex log_mtx_;
+
+        // Append entry, first dropping the oldest entries so that at most max_size remain (<= 0: no limit).
+        // The entry is copied from its source before the lock is taken.
+        template<class T>
+        void pushLog(std::deque<T> &logs, T entry, const int &max_size) {
+            std::lock_guard<std::mutex> lock(log_mtx_);
+            while (max_size > 0 && logs.size() >= static_cast<size_t>(max_size)) {
+                logs.pop_front();
+            }
+            logs.push_back(std::move(entry));
+        }
+
         /* Callback functions */
         bool finish_plan = false;
         double system_start_time_;

@@ -48,7 +48,8 @@ namespace fsm {
         quadrotor_msgs::PositionCommand latest_cmd;
         nav_msgs::Path path;
 
-        vector<quadrotor_msgs::PositionCommand> cmd_logs_;
+        // Bounded by fsm/cmd_log_max (pushLog): a command is logged at 100 Hz for the whole flight.
+        std::deque<quadrotor_msgs::PositionCommand> cmd_logs_;
 
         void resetVisualizedPath() override {
             path.poses.clear();
@@ -165,7 +166,7 @@ namespace fsm {
             pos_cmd.angular_velocity.z = omg(2);
             pos_cmd.thrust.z = aT;
             latest_cmd = pos_cmd;
-            cmd_logs_.push_back(latest_cmd);
+            pushLog(cmd_logs_, latest_cmd, cfg_.cmd_log_max);
         }
 
     public:
@@ -180,6 +181,9 @@ namespace fsm {
         typedef std::shared_ptr<FsmRos1> Ptr;
 
         void saveReplanLogToFile(const string &name = "") {
+            // held for the whole save, which reads both logs; only called from the destructor, once the
+            // spinner threads are gone, so no timer waits on it
+            std::lock_guard<std::mutex> lock(log_mtx_);
             // run statistic
             double total_length{0.0};
             int total_replan_num{0};
@@ -211,7 +215,9 @@ namespace fsm {
                                          ? LOG_FILE_DIR(
                                                  "cmd_logs/" + BinaryFileHandler<int>::getCurrentTimeStr() + ".csv")
                                          : LOG_FILE_DIR("cmd_logs/" + name + ".csv");
-            BinaryFileHandler<vector<LogOneReplan>>::save(save_path, replan_logs_);
+            // cereal writes a deque exactly as a vector (size, then each element): the log readers still
+            // load it as a vector<LogOneReplan>, and nothing is copied here.
+            BinaryFileHandler<std::deque<LogOneReplan>>::save(save_path, replan_logs_);
 
             std::ofstream csv_writer;
             csv_writer.open(csv_path, std::ios::out | std::ios::trunc);
@@ -259,7 +265,7 @@ namespace fsm {
             }
             fmt::print(" -- [Fsm] Cur vel: {}, delta_v: {}, max_delta_v: {}\n", pid_cmd_.vel_norm, delta_v,
                        max_delta_v);
-            cmd_logs_.push_back(latest_cmd);
+            pushLog(cmd_logs_, latest_cmd, cfg_.cmd_log_max);
             return true;
         }
 

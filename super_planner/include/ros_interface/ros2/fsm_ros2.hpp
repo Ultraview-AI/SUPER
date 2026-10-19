@@ -187,6 +187,9 @@ namespace fsm {
         typedef std::shared_ptr<FsmRos2> Ptr;
 
         void saveReplanLogToFile(const string &name = "") {
+            // held for the whole save, which reads replan_logs_; only called from the destructor, once the
+            // executor has stopped, so no timer waits on it
+            std::lock_guard<std::mutex> lock(log_mtx_);
             // run statistic
             double total_length{0.0};
             int total_replan_num{0};
@@ -219,7 +222,9 @@ namespace fsm {
                                          ? LOG_FILE_DIR(
                                                  "cmd_logs/" + BinaryFileHandler<int>::getCurrentTimeStr() + ".csv")
                                          : LOG_FILE_DIR("cmd_logs/" + name + ".csv");
-            BinaryFileHandler<vector<LogOneReplan>>::save(save_path, replan_logs_);
+            // cereal writes a deque exactly as a vector (size, then each element): the log readers still
+            // load it as a vector<LogOneReplan>, and nothing is copied here.
+            BinaryFileHandler<std::deque<LogOneReplan>>::save(save_path, replan_logs_);
 
             std::ofstream csv_writer;
             csv_writer.open(csv_path, std::ios::out | std::ios::trunc);

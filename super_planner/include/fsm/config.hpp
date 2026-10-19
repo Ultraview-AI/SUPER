@@ -50,6 +50,12 @@ namespace fsm {
         string cmd_topic, mpc_cmd_topic, click_goal_topic;
         double yaw_dot_max{};
 
+        // Entries kept in memory for the log files written at exit, oldest dropped first: replan logs
+        // (one per planning attempt, up to ~100 KB each) and, ROS 1 only, position commands (100 Hz,
+        // ~0.3 KB each). <= 0 keeps everything (upstream behaviour, grows without bound).
+        int replan_log_max{};
+        int cmd_log_max{};
+
         Config() = default;
 
         Config(const std::string & cfg_path) {
@@ -63,6 +69,8 @@ namespace fsm {
             loader.LoadParam("fsm/cmd_topic", cmd_topic, string("/planning/pos_cmd"));
             loader.LoadParam("fsm/mpc_cmd_topic", mpc_cmd_topic, string("/planning_cmd/mpc"));
             loader.LoadParam("fsm/click_goal_topic", click_goal_topic, string("/planning/click_goal_topic"));
+            loader.LoadParam("fsm/replan_log_max", replan_log_max, 200);
+            loader.LoadParam("fsm/cmd_log_max", cmd_log_max, 60000);
 
 
             loader.LoadParam("super_planner/yaw_dot_max", yaw_dot_max, 1.0, true);

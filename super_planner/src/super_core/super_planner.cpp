@@ -981,6 +981,14 @@ namespace super_planner {
             last_pos = cur_pos;
             eval_t += cfg_.sample_traj_dt;
         }
+        // Upstream UB guard. If the visibility scan stopped at its first sample, eval_ps holds only that
+        // point; if the loop above then added nothing (the point is outside the backup SFC, or the exp
+        // traj ends first), pop_back() empties eval_ps and back() below reads an empty vector. No exp
+        // point inside the SFC is left to seed from: fail this attempt like the other backup failures.
+        if (eval_ps.size() < 2) {
+            ros_ptr_->warn(" -- [SUPER] No exp traj point inside the backup SFC, force return");
+            return FAILED;
+        }
         eval_ps.pop_back();
         seed_point = eval_ps.back().second;
         seed_point_t = eval_ps.back().first;
@@ -1021,18 +1029,24 @@ namespace super_planner {
             latest_replan.setBackupCondition(init_ts, init_times, init_ps,
                                              t0, te,
                                              back_traj_info.getSFC());
-            Trajectory traj;
-            double out_ts;
-            back_traj_opt_->optimize(ref_exp_traj.posTraj(),
-                                     t0,
-                                     te,
-                                     init_ts,
-                                     sfc0,
-                                     init_times,
-                                     init_ps,
-                                     traj,
-                                     out_ts
-            );
+            // Re-solves the problem just logged, from its logged initial value, into locals nothing reads:
+            // a replay check that costs as much as the solve above, on every attempt, and a failing
+            // PlanFromRest is retried at 100 Hz. So only with the detailed log. Skipping it changes no
+            // later result: the optimize() overload above resets every input it uses (given_init too).
+            if (cfg_.detailed_log_en) {
+                Trajectory traj;
+                double out_ts;
+                back_traj_opt_->optimize(ref_exp_traj.posTraj(),
+                                         t0,
+                                         te,
+                                         init_ts,
+                                         sfc0,
+                                         init_times,
+                                         init_ps,
+                                         traj,
+                                         out_ts
+                );
+            }
 
         }
 
