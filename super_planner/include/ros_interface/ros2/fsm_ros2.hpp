@@ -339,7 +339,7 @@ namespace fsm {
                 replan_timer_ = nh_->create_wall_timer(
                         std::chrono::milliseconds(replan_ratems),
                         std::bind(&FsmRos2::replanTimerCallback, this),
-                        exec_cbk_group_
+                        replan_cbk_group_
                 );
             }
 

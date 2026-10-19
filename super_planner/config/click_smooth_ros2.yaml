@@ -83,8 +83,7 @@ traj_opt:
     penna_acc: 1.0e+5
     penna_jerk: -1.0e+5
     penna_omg: 1.0e+5
-    penna_max_acc_thr: 1.0e+5
-    penna_min_acc_thr: 1.0e+5
+    penna_thr: 1.0e+5
 
   flatness:
     mass: 1.64

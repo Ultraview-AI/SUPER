@@ -23,6 +23,7 @@
 
 
 
+#include <filesystem>
 #include <ros_interface/ros2/fsm_ros2.hpp>
 
 /*
@@ -85,6 +86,13 @@ int main(int argc, char** argv) {
     node->declare_parameter("config_name", cfg_path);
     node->get_parameter("config_name", cfg_path);
     cfg_path = CONFIG_FILE_DIR(cfg_path);
+    // Aegis: config_path (absolute) overrides config_name, as in ROS 1.
+    const std::string config_path = node->declare_parameter<std::string>("config_path", "");
+    if (!config_path.empty()) cfg_path = config_path;
+    // The planner writes debug logs under ROOT_DIR/log/ (git drops the empty folders).
+    std::error_code log_ec;
+    std::filesystem::create_directories(std::string(ROOT_DIR) + "log/replan_logs", log_ec);
+    RCLCPP_INFO(node->get_logger(), "SUPER config: %s", cfg_path.c_str());
     fsm_ptr->init(node,cfg_path);
 
     // 打印启动信息（ROS2风格）

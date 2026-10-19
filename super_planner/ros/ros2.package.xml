@@ -5,7 +5,8 @@
     <maintainer email="renyf@connect.hku.hk">Yunfan Ren</maintainer>
     <license>BSD</license>
     <buildtool_depend>ament_cmake</buildtool_depend>
-    <depend>rclcpp</depend>
+    <depend>mars_quadrotor_msgs</depend>
+  <depend>rclcpp</depend>
     <depend>sensor_msgs</depend>
     <depend>geometry_msgs</depend>
     <depend>nav_msgs</depend>
