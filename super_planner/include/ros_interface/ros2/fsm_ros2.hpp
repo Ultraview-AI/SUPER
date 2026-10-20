@@ -30,6 +30,7 @@
 
 #include "fsm/fsm.h"
 
+#include <cmath>
 #include <rclcpp/rclcpp.hpp>
 #include <ros_interface/ros2/ros2_interface.hpp>
 #include "geometry_msgs/msg/pose_stamped.hpp"
@@ -55,6 +56,7 @@ namespace fsm {
         rog_map::ROGMapROS::Ptr map_ptr_;
         mars_quadrotor_msgs::msg::PositionCommand latest_cmd;
         nav_msgs::msg::Path path;
+        double last_path_pub_t_{-1.0};  // AEGIS: see publishCurPoseToPath
 
         vector<mars_quadrotor_msgs::msg::PositionCommand> cmd_logs_;
 
@@ -74,8 +76,24 @@ namespace fsm {
             pose.pose.orientation.y = robot_state_.q.y();
             pose.pose.orientation.z = robot_state_.q.z();
             pose.pose.orientation.w = robot_state_.q.w();
-            path.poses.push_back(pose);
-            path_pub_->publish(path);
+            // AEGIS: this runs at 100 Hz in FOLLOW_TRAJ and published the WHOLE path every time, a path that
+            // only resets on a goal from WAIT_GOAL: O(n^2) data, 4.3 GB of a 4-minute flight's 5.3 GB bag,
+            // serialised by fsm_node for every subscriber (Foxglove, rosbag). Store a pose every 5 cm, keep the
+            // last 2000 (100 m), publish at 5 Hz.
+            const auto& q = pose.pose.position;
+            const bool moved = path.poses.empty() ||
+                               std::hypot(q.x - path.poses.back().pose.position.x,
+                                          std::hypot(q.y - path.poses.back().pose.position.y,
+                                                     q.z - path.poses.back().pose.position.z)) >= 0.05;
+            if (moved) {
+                path.poses.push_back(pose);
+                if (path.poses.size() > 2000) path.poses.erase(path.poses.begin(), path.poses.begin() + 500);
+            }
+            const double now_t = ros_ptr_->getSimTime();
+            if (now_t - last_path_pub_t_ >= 0.2) {
+                last_path_pub_t_ = now_t;
+                path_pub_->publish(path);
+            }
         }
 
         void publishPolyTraj() override {
