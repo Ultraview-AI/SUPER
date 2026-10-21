@@ -51,8 +51,20 @@ namespace traj_opt {
     }
 
     void YawTrajOpt::getYawWaypointAllocation(const Vec4f &init_state, Vec4f &goal_state, VecDf &way_pts, VecDf &times,
-                                              const Trajectory &pos_traj) {
+                                              const Trajectory &pos_traj, const bool &to_goal) {
         double eval_t = 0;
+        if (to_goal) {  // AEGIS YAW_TO_GOAL: an even turn from the start yaw to the goal yaw over the leg
+            way_pts.resize(times.size() - 1);
+            const double total = times.sum();
+            double goal_yaw = goal_state(0);
+            geometry_utils::normalizeNextYaw(init_state(0), goal_yaw);
+            for (long int i = 0; i < times.size() - 1; i++) {
+                eval_t += times(i);
+                way_pts(i) = init_state(0) + (goal_yaw - init_state(0)) * (total > 0 ? eval_t / total : 1.0);
+            }
+            goal_state(0) = goal_yaw;
+            return;
+        }
         vec_Vec3f debug1, debug2;
         double last_yaw = init_state(0);
         way_pts.resize(times.size() - 1);
@@ -96,7 +108,8 @@ namespace traj_opt {
 //            cout << times.transpose() << endl;
     }
 
-    YawTrajOpt::YawTrajOpt(const double &_yaw_dot_max) : yaw_dot_max_(_yaw_dot_max) {
+    YawTrajOpt::YawTrajOpt(const double &_yaw_dot_max, const bool &to_goal)
+        : yaw_dot_max_(_yaw_dot_max), to_goal_(to_goal) {
     }
 
     bool YawTrajOpt::optimize(const Vec4f &istate_in,
@@ -139,7 +152,7 @@ namespace traj_opt {
         VecDf times;
         getYawTimeAllocation(pos_traj_dur, times);
         VecDf way_pts;
-        getYawWaypointAllocation(init_state, goal_state, way_pts, times, pos_traj);
+        getYawWaypointAllocation(init_state, goal_state, way_pts, times, pos_traj, to_goal_ && !free_goal_);
         Trajectory yaw_traj;
         switch (order) {
             case 3: {

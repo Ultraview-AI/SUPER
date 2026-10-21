@@ -45,17 +45,20 @@ namespace traj_opt {
     private:
         bool free_goal_{false};
         double yaw_dot_max_{10};
+        bool to_goal_{false};
 
     public:
 
-        explicit YawTrajOpt(const double &_yaw_dot_max);
+        // to_goal (AEGIS, super_planner/yaw_mode 2 = YAW_TO_GOAL): when the leg has a goal yaw, the guide yaw
+        // turns evenly from the start yaw to it over the whole leg instead of following the path direction.
+        explicit YawTrajOpt(const double &_yaw_dot_max, const bool &to_goal = false);
 
         typedef std::shared_ptr<YawTrajOpt> Ptr;
 
         void getYawTimeAllocation(const double &duration, VecDf &times) const ;
 
         static void getYawWaypointAllocation(const Vec4f &init_state, Vec4f &goal_state, VecDf &way_pts, VecDf &times,
-                                      const Trajectory &pos_traj) ;
+                                      const Trajectory &pos_traj, const bool &to_goal = false) ;
 
         bool optimize(const Vec4f &istate_in,
                       const Vec4f &gstate_in,

@@ -40,7 +40,8 @@ namespace super_planner {
         ros_ptr_->setVisualizationEn(cfg_.visualization_en);
         exp_traj_opt_ = std::make_shared<traj_opt::ExpTrajOpt>(cfg_.exp_traj_cfg, ros_ptr_);
         back_traj_opt_ = std::make_shared<traj_opt::BackupTrajOpt>(cfg_.back_traj_cfg, ros_ptr_);
-        yaw_traj_opt_ = std::make_shared<traj_opt::YawTrajOpt>(cfg_.yaw_dot_max);
+        yaw_traj_opt_ = std::make_shared<traj_opt::YawTrajOpt>(cfg_.yaw_dot_max,
+                                                               cfg_.yaw_mode == Config::YAW_TO_GOAL);
         const auto &rog_map_cfg = map_ptr_->getMapConfig();
         astar_ptr_ = std::make_shared<path_search::Astar>(cfg_path, ros_ptr_, map_ptr_);
         cg_ptr_ = std::make_shared<CorridorGenerator>(ros_ptr_, map_ptr_, cfg_.corridor_bound_dis,
@@ -792,7 +793,9 @@ namespace super_planner {
 
 
         bool free_end{true};
-        if (cfg_.goal_yaw_en && !std::isnan(gi_.goal_yaw) && connected_goal) {
+        // AEGIS: with YAW_TO_GOAL a leg that does not reach the goal yet also turns toward the goal yaw
+        if (cfg_.goal_yaw_en && !std::isnan(gi_.goal_yaw) &&
+            (connected_goal || cfg_.yaw_mode == Config::YAW_TO_GOAL)) {
             free_end = false;
             fina_yaw[0] = gi_.goal_yaw;
         }
