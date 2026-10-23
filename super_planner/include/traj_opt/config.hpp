@@ -66,6 +66,13 @@ namespace traj_opt {
         int piece_num{0};
 
         double penna_margin{0.05};
+        // 0004: lower bound on each piece's INITIAL duration, applied after the 0.8 hot-start scale.
+        // <= 0 (default) keeps upstream: guide-time differences floored at 0.01 s, then x0.8.
+        double init_piece_t_floor{-1.0};
+        // 0005: when L-BFGS stops because the line search hit its try limit, x has already been reverted to
+        // the last accepted iterate. true = re-evaluate the penalties there and let the acceptance test judge
+        // it; false (default) keeps upstream: the result is discarded whatever it is.
+        bool accept_ls_stall{false};
 
         double smooth_eps{0};
         int integral_reso{0};
@@ -106,6 +113,8 @@ namespace traj_opt {
             loader.LoadParam("traj_opt/boundary/max_acc_thr", max_acc_thr, -1.0);
             loader.LoadParam("traj_opt/boundary/min_acc_thr", min_acc_thr, -1.0);
             loader.LoadParam("traj_opt/boundary/penna_margin", penna_margin, 0.05);
+            loader.LoadParam("traj_opt" + ns + "init_piece_t_floor", init_piece_t_floor, -1.0);
+            loader.LoadParam("traj_opt" + ns + "accept_ls_stall", accept_ls_stall, false);
 
             loader.LoadParam("traj_opt" + ns + "penna_scale", penna_scale, -1.0);
             loader.LoadParam("traj_opt" + ns + "penna_t", penna_t, -1.0);

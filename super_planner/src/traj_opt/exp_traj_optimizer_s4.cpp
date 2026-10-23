@@ -536,6 +536,17 @@ bool ExpTrajOpt::setupProblemAndCheck() {
         defaultInitialization();
     } else {
         opt_vars.times *= 0.8;
+        // 0004: a piece whose guide-time difference is ~0 starts at 0.01 x 0.8 = 0.008 s. With
+        // T = 1 / (0.5 tau^2 - tau + 1) the gradient in tau is ~1e-3 there, so L-BFGS "converges" with the
+        // piece still ~0.008 s and the acceleration test rejects the result, identically on every retry.
+        // Start every piece at least at max(init_piece_t_floor, its hot-start length / max_vel).
+        if (cfg_.init_piece_t_floor > 0) {
+            for (long i = 0; i < opt_vars.piece_num; i++) {
+                const double len = (opt_vars.init_path.col(i + 1) - opt_vars.init_path.col(i)).norm();
+                const double lb = std::max(cfg_.init_piece_t_floor, cfg_.max_vel > 0 ? len / cfg_.max_vel : 0.0);
+                opt_vars.times(i) = std::max(opt_vars.times(i), lb);
+            }
+        }
     }
 
     if (std::isnan(opt_vars.times.sum())) {
@@ -698,6 +709,14 @@ double ExpTrajOpt::optimize(Trajectory &traj, const double &relCostTol) {
                                     &this->opt_vars,
                                     lbfgs_params);
     // double dt = ttt.stop();
+    // 0005: LBFGSERR_MAXIMUMLINESEARCH means the line search could not improve on the current iterate at
+    // the available precision; lbfgs.cpp:197-202 has reverted x to that iterate. opt_vars.penalty_log still
+    // holds the REJECTED trial point, so evaluate once at x before the acceptance test below decides.
+    if (cfg_.accept_ls_stall && ret == lbfgs::LBFGSERR_MAXIMUMLINESEARCH) {
+        VecDf g_at_x(x.size());
+        minCostFunctional = ExpTrajOpt::costFunctional(&this->opt_vars, x, g_at_x);
+        ret = 0;
+    }
     gcopter::forwardMapTauToT(tau, opt_vars.times);
     if (cfg_.print_optimizer_log) {
         cout << " -- [ExpOpt] Opt finish, with iter num: " << opt_vars.iter_num << "\n";
