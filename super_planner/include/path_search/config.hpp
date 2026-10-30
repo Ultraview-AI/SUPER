@@ -27,6 +27,7 @@
 #include "vector"
 #include "Eigen/Dense"
 #include "string"
+#include <stdexcept>
 #include "utils/header/type_utils.hpp"
 #include "utils/header/yaml_loader.hpp"
 
@@ -44,6 +45,13 @@ namespace path_search {
         bool debug_visualization_en;
         bool allow_diag{false};
         int heu_type{0};
+        /// Obstacle-clearance cost (front end only, inflated-map search only).
+        /// A step leaving a cell whose distance d [m] to the nearest inflated-occupied
+        /// cell is below clearance_dist costs
+        ///     step_len * (1 + clearance_weight * (clearance_dist - d))
+        /// instead of step_len. clearance_weight [1/m]; 0 (the default) is exactly the stock search.
+        double clearance_weight{0.0};
+        double clearance_dist{0.0};
 
         PathSearchConfig() {};
 
@@ -55,6 +63,11 @@ namespace path_search {
             loader.LoadParam(name_space + "/debug_visualization_en", debug_visualization_en, false);
             loader.LoadParam(name_space + "/heu_type", heu_type, 0);
             loader.LoadParam(name_space + "/visual_process", visual_process, false);
+            loader.LoadParam(name_space + "/clearance_weight", clearance_weight, 0.0);
+            loader.LoadParam(name_space + "/clearance_dist", clearance_dist, 0.0);
+            if (clearance_weight < 0.0 || clearance_dist < 0.0) {
+                throw std::invalid_argument(" -- [A*] astar/clearance_weight and astar/clearance_dist must be >= 0.");
+            }
             map_voxel_num = Vec3i(vox_[0], vox_[1], vox_[2]);
             map_size_i = map_voxel_num / 2;
             map_voxel_num = map_size_i * 2 + Vec3i::Constant(1);

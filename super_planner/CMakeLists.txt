@@ -133,4 +133,21 @@ install(DIRECTORY
 )
 
 
+#=================TESTS (colcon test) ============================#
+if (BUILD_TESTING)
+    find_package(ament_cmake_gtest REQUIRED)
+    # A* obstacle-clearance cost: w = 0 is the stock search; w > 0 keeps clearance and still reaches the goal.
+    ament_add_gtest(test_astar_clearance test/test_astar_clearance.cpp
+            SKIP_LINKING_MAIN_LIBRARIES
+            TIMEOUT 300)
+    target_link_libraries(test_astar_clearance super ${third_party_libs})
+    ament_target_dependencies(test_astar_clearance ${ros_libs})
+
+    # Manual benchmark on a real map (not registered as a test):
+    #   bench_astar_clearance <map.pcd> <n_queries> <dump_prefix> [w:d ...]
+    add_executable(bench_astar_clearance test/bench_astar_clearance.cpp)
+    target_link_libraries(bench_astar_clearance super ${third_party_libs})
+    ament_target_dependencies(bench_astar_clearance ${ros_libs})
+endif ()
+
 ament_package()

@@ -230,6 +230,124 @@ namespace path_search {
     }
 
 
+    void Astar::setClearanceCost(const double &weight, const double &dist) {
+        if (weight < 0.0 || dist < 0.0) {
+            throw std::invalid_argument(" -- [A*] clearance weight and distance must be >= 0.");
+        }
+        cfg_.clearance_weight = weight;
+        cfg_.clearance_dist = dist;
+    }
+
+    bool Astar::clearanceCostEnabled() const {
+        // Only the inflated-map search: the prob-map fallback (USE_INF_NEIGHBOR) already keeps
+        // robot_r/resolution cells off every occupied cell and only runs when the inf map has no path.
+        return md_.use_inf_map && cfg_.clearance_weight > 0.0 && cfg_.clearance_dist > 0.0;
+    }
+
+    void Astar::buildClearanceOffsets() {
+        if (clearance_offsets_res_ == md_.resolution && clearance_offsets_dist_cfg_ == cfg_.clearance_dist) {
+            return;
+        }
+        clearance_offsets_res_ = md_.resolution;
+        clearance_offsets_dist_cfg_ = cfg_.clearance_dist;
+        // Only cells strictly closer than clearance_dist can add cost.
+        const double rc = cfg_.clearance_dist / md_.resolution;
+        const int r = static_cast<int>(std::ceil(rc));
+        const double max_sq = rc * rc;
+        auto sortOffsets = [](ClearanceOffsets &c) {
+            std::vector<size_t> idx(c.off.size());
+            for (size_t i = 0; i < idx.size(); i++) {
+                idx[i] = i;
+            }
+            std::stable_sort(idx.begin(), idx.end(), [&](size_t a, size_t b) { return c.sq[a] < c.sq[b]; });
+            ClearanceOffsets o;
+            for (size_t i: idx) {
+                o.off.push_back(c.off[i]);
+                o.sq.push_back(c.sq[i]);
+            }
+            c = o;
+        };
+        clearance_ball_ = ClearanceOffsets{};
+        for (auto &c: clearance_crescent_) {
+            c = ClearanceOffsets{};
+        }
+        for (int i = -r; i <= r; i++) {
+            for (int j = -r; j <= r; j++) {
+                for (int k = -r; k <= r; k++) {
+                    const int sq = i * i + j * j + k * k;
+                    if (sq == 0 || sq >= max_sq) {
+                        continue;
+                    }
+                    clearance_ball_.off.emplace_back(i, j, k);
+                    clearance_ball_.sq.push_back(sq);
+                    // Father at child - s: the cell is outside the father's ball iff |o + s| >= rc.
+                    for (int dx = -1; dx <= 1; dx++) {
+                        for (int dy = -1; dy <= 1; dy++) {
+                            for (int dz = -1; dz <= 1; dz++) {
+                                const int fx = i + dx, fy = j + dy, fz = k + dz;
+                                if (fx * fx + fy * fy + fz * fz >= max_sq) {
+                                    auto &c = clearance_crescent_[(dx + 1) * 9 + (dy + 1) * 3 + (dz + 1)];
+                                    c.off.emplace_back(i, j, k);
+                                    c.sq.push_back(sq);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        sortOffsets(clearance_ball_);
+        for (auto &c: clearance_crescent_) {
+            sortOffsets(c);
+        }
+    }
+
+    double Astar::getClearance(GridNodePtr node) {
+        // Nearest inflated-occupied cell by an outward scan over offsets sorted by distance: a cell
+        // next to an obstacle returns after a few probes. Same occupancy query as the search itself
+        // (getInfGridType: inflated map plus the virtual ceiling / ground); OUT_OF_MAP and UNKNOWN
+        // do not count as obstacles. With d(father) known and |step| <= sqrt(3) cells:
+        //  - father's ball free: every cell of the child's ball inside the father's ball is free,
+        //    so only the crescent can hold the nearest obstacle (~1/4 of the ball);
+        //  - otherwise d(child) >= d(father) - |step|, so the shells below that are skipped.
+        // Both give exactly the full-scan distance.
+        const ClearanceOffsets *list = &clearance_ball_;
+        size_t i0 = 0;
+        const GridNodePtr f = node->father_ptr;
+        // clr_sq only fits a uint8 below 255 cells^2 (clearance_dist < ~16 cells).
+        const bool can_store = clearance_ball_.sq.empty() || clearance_ball_.sq.back() < GridNode::CLR_FREE;
+        if (clearance_incremental_ && can_store && f != nullptr && f->rounds == rounds_ &&
+            f->state == GridNode::CLOSEDSET) {
+            const rog_map::Vec3i s = node->id_g - f->id_g;
+            if (s.cwiseAbs().maxCoeff() <= 1) {
+                if (f->clr_sq == GridNode::CLR_FREE) {
+                    list = &clearance_crescent_[(s.x() + 1) * 9 + (s.y() + 1) * 3 + (s.z() + 1)];
+                } else {
+                    const double lb = std::sqrt(static_cast<double>(f->clr_sq)) -
+                                      std::sqrt(static_cast<double>(s.squaredNorm())) - 1e-9;
+                    if (lb > 0) {
+                        const int lb_sq = static_cast<int>(std::floor(lb * lb));
+                        i0 = std::lower_bound(list->sq.begin(), list->sq.end(), lb_sq) - list->sq.begin();
+                    }
+                }
+            }
+        }
+        const size_t n = list->off.size();
+        for (size_t i = i0; i < n; i++) {
+            rog_map::Vec3f pos;
+            globalIndexToPos(node->id_g + list->off[i], pos);
+            if (map_ptr_->getInfGridType(pos) == OCCUPIED) {
+                clearance_probe_cnt_ += static_cast<long>(i - i0 + 1);
+                // Without can_store the children never read it (they do a full scan).
+                node->clr_sq = can_store ? static_cast<uint8_t>(list->sq[i]) : GridNode::CLR_FREE;
+                return std::sqrt(static_cast<double>(list->sq[i])) * md_.resolution;
+            }
+        }
+        clearance_probe_cnt_ += static_cast<long>(n - i0);
+        node->clr_sq = GridNode::CLR_FREE;
+        return cfg_.clearance_dist;
+    }
+
     RET_CODE Astar::pointToPointPathSearch(const rog_map::Vec3f &start_pt, const rog_map::Vec3f &end_pt,
                                            const int &flag, const double &searching_horizon,
                                            rog_map::vec_Vec3f &out_path, const double &time_out) {
@@ -340,12 +458,30 @@ namespace path_search {
         startPtr->id_g = start_idx;
         startPtr->rounds = rounds_;
         startPtr->distance_score = 0;
+        startPtr->path_len = 0.f;
         startPtr->total_score = getHeu(startPtr, endPtr, cfg_.heu_type);
         startPtr->state = GridNode::OPENSET; //put start node in open set
         startPtr->father_ptr = NULL;
         open_set.push(startPtr); //put start in open set
         int num_iter = 0;
         vector<GridNodePtr> node_path;
+
+        // Clearance cost. With it off (weight 0) every line below that depends on it is skipped and
+        // the search is the stock one bit for bit.
+        const bool clearance_en = clearanceCostEnabled();
+        if (clearance_en) {
+            buildClearanceOffsets();
+        }
+        clearance_probe_cnt_ = 0;
+        last_stats_ = SearchStats{};
+        struct StatsGuard {
+            Astar *a;
+            int *iter;
+            ~StatsGuard() {
+                a->last_stats_.expanded = *iter;
+                a->last_stats_.clearance_probes = a->clearance_probe_cnt_;
+            }
+        } stats_guard{this, &num_iter};
 
         if (cfg_.visual_process) {
             ros_ptr_->vizAstarPoints(
@@ -389,8 +525,11 @@ namespace path_search {
                 return REACH_GOAL;
             }
 
-            // Distance terminate condition
-            if (searching_horizon > 0 && current->distance_score > searching_horizon / md_.resolution) {
+            // Distance terminate condition. The horizon is a path LENGTH: with the clearance cost on,
+            // distance_score is a cost and would stop the search short of the horizon near obstacles.
+            const double travelled = clearance_en ? static_cast<double>(current->path_len)
+                                                  : current->distance_score;
+            if (searching_horizon > 0 && travelled > searching_horizon / md_.resolution) {
                 GridNodePtr local_goal = current;
                 if (md_.unknown_as_occ && !frontier_queue.empty()) {
                     local_goal = frontier_queue.top()->father_ptr;
@@ -408,6 +547,15 @@ namespace path_search {
 
 
             current->state = GridNode::CLOSEDSET; //move current node from open set to closed set.
+
+            // Every step leaving `current` is scaled by its clearance penalty. Charging the cell a
+            // step leaves (not the one it enters) needs one distance query per EXPANDED node, which
+            // is closed exactly once per search, instead of one per discovered neighbour (~26x more).
+            double step_scale = 1.0;
+            if (clearance_en) {
+                const double clr = getClearance(current);
+                step_scale = 1.0 + cfg_.clearance_weight * (cfg_.clearance_dist - clr);
+            }
 
             for (int dx = -1; dx <= 1; dx++)
                 for (int dy = -1; dy <= 1; dy++)
@@ -483,7 +631,8 @@ namespace path_search {
                         }
 
                         neighborPtr->rounds = rounds_;
-                        double distance_score = sqrt(dx * dx + dy * dy + dz * dz);
+                        const double step_len = sqrt(dx * dx + dy * dy + dz * dz);
+                        double distance_score = clearance_en ? step_len * step_scale : step_len;
                         distance_score = current->distance_score + distance_score;
                         rog_map::Vec3f pos;
                         globalIndexToPos(neighborIdx, pos);
@@ -496,12 +645,18 @@ namespace path_search {
                             neighborPtr->distance_score = distance_score;
                             neighborPtr->distance_to_goal = heu_score;
                             neighborPtr->total_score = distance_score + heu_score;
+                            if (clearance_en) {
+                                neighborPtr->path_len = current->path_len + static_cast<float>(step_len);
+                            }
                             open_set.push(neighborPtr); //put neighbor in open set and record it.
                         } else if (distance_score < neighborPtr->distance_score) {
                             neighborPtr->father_ptr = current;
                             neighborPtr->distance_score = distance_score;
                             neighborPtr->distance_to_goal = heu_score;
                             neighborPtr->total_score = distance_score + heu_score;
+                            if (clearance_en) {
+                                neighborPtr->path_len = current->path_len + static_cast<float>(step_len);
+                            }
                         }
                     }
             double time_2 = ros_ptr_->getSimTime();

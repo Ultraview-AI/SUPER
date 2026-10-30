@@ -42,18 +42,30 @@ namespace path_search {
     typedef GridNode *GridNodePtr;
 
     struct GridNode {
-        enum enum_state {
+        enum enum_state : uint8_t {
             OPENSET = 1,
             CLOSEDSET = 2,
             UNDEFINED = 3
         } state{UNDEFINED};
+        // Clearance of this node when it was expanded (clearance cost on only): squared distance
+        // [cells^2] to the nearest inflated-occupied cell, or CLR_FREE when none is closer than
+        // clearance_dist. Its children start their scan from it. Fits in former padding.
+        static constexpr uint8_t CLR_FREE = 255;
+        uint8_t clr_sq{CLR_FREE};
 
         int rounds{0};
         rog_map::Vec3i id_g;
+        // Geometric path length from the start [cells]. Lives in what was alignment padding, so
+        // GridNode stays 56 bytes (the A* buffer holds map_voxel_num nodes, 25 M on the Aegis).
+        // Only maintained (and used, for the horizon) when the clearance cost is on; with it off
+        // distance_score is the path length, as in stock SUPER.
+        float path_len{0.f};
         double total_score{inf}, distance_score{inf};
         double distance_to_goal{inf};
         GridNodePtr father_ptr{nullptr};
     };
+    static_assert(sizeof(void *) != 8 || sizeof(GridNode) == 56,
+                  "GridNode grew: the A* node buffer is map_voxel_num nodes, every byte costs ~25 MB on the Aegis");
 
     class NodeComparator {
     public:
@@ -89,6 +101,30 @@ namespace path_search {
         vector<GridNodePtr> grid_node_buffer_;
 
         int rounds_{0};
+
+        // Clearance cost: cell offsets closer than clearance_dist, sorted by distance, built for
+        // clearance_offsets_res_ (the search resolution).
+        struct ClearanceOffsets {
+            rog_map::vec_Vec3i off;
+            std::vector<int> sq;  // squared length [cells^2], ascending
+        };
+        // The ball (|o| < clearance_dist), and per step direction the "crescent": the part of a
+        // child's ball that is outside its father's ball, so a child of a father with a free ball
+        // only scans the crescent.
+        ClearanceOffsets clearance_ball_;
+        ClearanceOffsets clearance_crescent_[27];
+        double clearance_offsets_res_{-1.0}, clearance_offsets_dist_cfg_{-1.0};
+        long clearance_probe_cnt_{0};
+        bool clearance_incremental_{true};
+
+        bool clearanceCostEnabled() const;
+
+        void buildClearanceOffsets();
+
+        /// Exact distance [m] from `node` to the nearest inflated-occupied cell, capped at
+        /// clearance_dist; also stores it in node->clr_sq. Uses the father's stored clearance
+        /// (1-Lipschitz) to skip cells that cannot be occupied.
+        double getClearance(GridNodePtr node);
 
         static constexpr int DIAG = 0;
         static constexpr int MANH = 1;
@@ -147,6 +183,25 @@ namespace path_search {
         void setVisualProcessEn(const bool &en);
 
         void setFineInfNeighbors(const int & neighbor_step);
+
+        /// Override astar/clearance_weight [1/m] and astar/clearance_dist [m]; weight 0 = stock search.
+        void setClearanceCost(const double &weight, const double &dist);
+
+        /// Tests only: false makes every clearance query a full ball scan (the reference).
+        void setClearanceIncremental(const bool &en) { clearance_incremental_ = en; }
+
+        /// Statistics of the last pointToPointPathSearch call (for tests / benchmarks).
+        struct SearchStats {
+            int expanded{0};
+            long clearance_probes{0};
+        };
+
+        SearchStats getLastSearchStats() const { return last_stats_; }
+
+    private:
+        SearchStats last_stats_;
+
+    public:
 
         RET_CODE pointToPointPathSearch(const rog_map::Vec3f &start_pt, const rog_map::Vec3f &end_pt,
                                         const int &flag,
